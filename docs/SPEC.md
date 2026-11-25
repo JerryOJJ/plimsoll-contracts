@@ -244,6 +244,7 @@ Records what was said, and answers coverage questions.
 | `ReportBy(Address, Tier, Address)` | persistent | `ReserveReport`: the latest from one reporter at one tier for one asset |
 | `Reporters(Address, Tier)` | persistent | `Vec<Address>`: the reporters with a `ReportBy` entry at that tier, in the order they first posted; at most `MAX_REPORTERS_PER_TIER = 4` |
 | `Report(Address, Tier)` | persistent | `ReserveReport`: the v0.1 layout (one per tier). Read until migrated, never written; see [Upgrading a v0.1 deployment](#upgrading-a-v01-deployment) |
+| `Alias(Address)` | persistent | `Address`: maps a deprecated asset SAC to its successor SAC |
 
 Every reporter keeps their own figure. Two auditors' reports coexist, and a
 transcriber who posts a later `as_of` adds a fresher figure without erasing
@@ -291,6 +292,8 @@ data layouts, with real testnet examples, are in [EVENTS.md](EVENTS.md).
 | `get_reports(sac)` | — | `Vec<ReserveReport>` (every stored report that counts: strongest tier first, then first-post order within a tier) | — | — |
 | `coverage(sac, min_tier: Tier)` | — | `Option<Coverage>` | — | — |
 | `is_covered(sac, min_bps: u32, max_age: u64, min_tier: Tier)` | — | `bool` | — | — |
+| `alias_asset(old: Address, new: Address)` | admin | `()` | `AssetNotListed` (either SAC unlisted), `SelfAlias` | `asset_aliased {old, new}` |
+| `get_alias(asset: Address)` | — | `Option<Address>` | — | — |
 | `registry()` / `admin()` | — | `Address` | — | — |
 | `transfer_admin(new_admin)` | admin and new_admin | `()` | — | `admin_transferred` |
 | `propose_upgrade(wasm_hash: BytesN<32>)` | admin | `()` | — | `upgrade_proposed {wasm_hash} executable_at_ledger` |
@@ -341,6 +344,21 @@ Rules:
   `None` if there is no supply snapshot or no qualifying report.
 - `is_covered` is true only if `coverage` is `Some`, both the supply snapshot
   and the report are no older than `max_age` seconds, and `bps >= min_bps`.
+  The comparison is **inclusive**: a coverage ratio exactly equal to `min_bps`
+  returns `true`. This matters at exact round numbers such as `min_bps = 10_000`
+  (100 %): an asset with reserves equal to its circulating supply passes the
+  gate.
+
+- `alias_asset(old, new)` creates or replaces the alias mapping `old → new`.
+  Both `old` and `new` must be listed assets; `old == new` is rejected with
+  `SelfAlias`. Only one alias hop is ever followed: `is_covered(old, ...)` and
+  `coverage(old, ...)` resolve to `new`, but if `new` itself has an alias it is
+  ignored (no chaining). The admin may call `alias_asset` a second time with the
+  same `old` to point it at a different successor, or to `old` itself (which
+  would be rejected with `SelfAlias`; to remove an alias, use a new listing for
+  `old`).
+- `get_alias(asset)` returns the successor address if one has been registered,
+  or `None`.
 
 Errors (`LedgerError`): `NotAStellarAsset = 1`, `AlreadyListed = 2`,
 `AssetNotListed = 3`, `NotSupplyPoster = 4`, `NotReporter = 5`,

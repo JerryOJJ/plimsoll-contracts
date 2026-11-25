@@ -37,6 +37,8 @@ enum DataKey {
     ReportBy(Address, Tier, Address),
     /// Reporters with a `ReportBy` entry at (sac, tier), in first-post order.
     Reporters(Address, Tier),
+    /// Maps a deprecated asset SAC to its successor SAC (at most one hop).
+    Alias(Address),
 }
 
 #[contracterror]
@@ -122,6 +124,15 @@ pub struct UpgradeExecuted {
 pub struct UpgradeCancelled {
     #[topic]
     pub wasm_hash: BytesN<32>,
+}
+
+#[contractevent]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AssetAliased {
+    #[topic]
+    pub old: Address,
+    #[topic]
+    pub new: Address,
 }
 
 #[contract]
@@ -261,25 +272,47 @@ fn counts(registry: &RegistryClient, report: &ReserveReport) -> bool {
     registry.role_of(&report.reporter) == Some(needed)
 }
 
-/// The freshest report in `candidates` that still counts. Candidates come in
-/// priority order (strongest tier first, then first-post order), so on equal
-/// `as_of` the earlier one wins. The registry is asked only about the report
-/// that would win, and again only if that one no longer counts, so a fresh
-/// issuer-signed report costs no cross-contract call at all.
-fn pick_counting(env: &Env, mut candidates: Vec<ReserveReport>) -> Option<ReserveReport> {
+/// The freshest counting report in `candidates`.
+///
+/// Two-phase per iteration: (1) a single O(n) index scan that finds the
+/// globally freshest non-rejected candidate without touching the registry,
+/// then (2) one `counts` call. If that report is revoked the index is marked
+/// and the loop repeats. This avoids Vec::remove (O(n) element shift) and
+/// keeps registry calls at most equal to the number of revoked reporters.
+/// A bitmask tracks rejected positions; `candidates` is never mutated.
+/// We have at most 3 tiers × (1 legacy + MAX_REPORTERS_PER_TIER) = 15
+/// entries, so a u32 bitmask is always sufficient.
+fn pick_counting(env: &Env, candidates: Vec<ReserveReport>) -> Option<ReserveReport> {
     let registry = RegistryClient::new(env, &registry(env));
+    let n = candidates.len();
+    let mut skip: u32 = 0;
     loop {
-        let mut best: Option<(u32, ReserveReport)> = None;
-        for (i, report) in candidates.iter().enumerate() {
-            if best.as_ref().is_none_or(|(_, b)| report.as_of > b.as_of) {
-                best = Some((i as u32, report));
+        // Phase 1: find the freshest non-skipped candidate (no registry call).
+        let mut best_i: Option<u32> = None;
+        for i in 0..n {
+            if skip & (1u32 << i) != 0 {
+                continue;
             }
+            let r = candidates.get(i).unwrap();
+            best_i = Some(match best_i {
+                None => i,
+                Some(bi) => {
+                    let b = candidates.get(bi).unwrap();
+                    if r.as_of > b.as_of || (r.as_of == b.as_of && r.tier > b.tier) {
+                        i
+                    } else {
+                        bi
+                    }
+                }
+            });
         }
-        let (i, report) = best?;
+        // Phase 2: check only the winner.
+        let i = best_i?;
+        let report = candidates.get(i).unwrap();
         if counts(&registry, &report) {
             return Some(report);
         }
-        candidates.remove(i);
+        skip |= 1u32 << i;
     }
 }
 
@@ -523,6 +556,27 @@ impl CoverageLedger {
         read_persistent(&env, &DataKey::Supply(sac))
     }
 
+    /// Register `new` as the successor of the deprecated asset `old`.
+    /// Both must already be listed. At most one alias hop is ever followed:
+    /// `is_covered(old, ...)` and `coverage(old, ...)` will resolve `old` to
+    /// `new`, but `new`'s own alias (if any) is ignored.
+    pub fn alias_asset(env: Env, old: Address, new: Address) {
+        admin(&env).require_auth();
+        if old == new {
+            panic_with_error!(&env, LedgerError::SelfAlias);
+        }
+        require_listed(&env, &old);
+        require_listed(&env, &new);
+        write_persistent(&env, &DataKey::Alias(old.clone()), &new);
+        bump_instance(&env);
+        AssetAliased { old, new }.publish(&env);
+    }
+
+    /// The registered successor of `asset`, if one exists.
+    pub fn get_alias(env: Env, asset: Address) -> Option<Address> {
+        read_persistent(&env, &DataKey::Alias(asset))
+    }
+
     /// The freshest report at `tier` that still counts.
     pub fn get_report(env: Env, sac: Address, tier: Tier) -> Option<ReserveReport> {
         freshest_at(&env, &sac, tier)
@@ -544,9 +598,13 @@ impl CoverageLedger {
     }
 
     /// Latest supply against the freshest report at `min_tier` or stronger.
+    /// If `sac` has a registered alias its successor is used transparently
+    /// (at most one hop — the successor's own alias, if any, is not followed).
     pub fn coverage(env: Env, sac: Address, min_tier: Tier) -> Option<Coverage> {
-        let supply = read_persistent::<SupplySnapshot>(&env, &DataKey::Supply(sac.clone()))?;
-        let report = best_report(&env, &sac, min_tier)?;
+        let resolved = read_persistent::<Address>(&env, &DataKey::Alias(sac.clone()))
+            .unwrap_or_else(|| sac.clone());
+        let supply = read_persistent::<SupplySnapshot>(&env, &DataKey::Supply(resolved.clone()))?;
+        let report = best_report(&env, &resolved, min_tier)?;
         Some(Coverage {
             bps: coverage_bps(report.amount, supply.amount),
             supply: supply.amount,
@@ -559,15 +617,36 @@ impl CoverageLedger {
     }
 
     /// True when both the supply snapshot and the chosen report are at most
-    /// `max_age` seconds old and coverage is at least `min_bps`.
+    /// `max_age` seconds old and coverage is at least `min_bps` (inclusive).
+    ///
+    /// If `sac` has a registered alias its successor is used transparently
+    /// (at most one hop). See `alias_asset` and `get_alias`.
+    ///
+    /// Performance note: the supply snapshot is loaded first. When it is
+    /// absent or already older than `max_age` the function returns false
+    /// immediately, before reading any reserve reports. This is the common
+    /// early-exit path: a stale supply avoids all subsequent storage reads.
     pub fn is_covered(env: Env, sac: Address, min_bps: u32, max_age: u64, min_tier: Tier) -> bool {
-        let coverage = match Self::coverage(env.clone(), sac, min_tier) {
-            Some(c) => c,
+        // Follow at most one alias hop before loading anything else.
+        let resolved = read_persistent::<Address>(&env, &DataKey::Alias(sac.clone()))
+            .unwrap_or_else(|| sac.clone());
+        // Load supply first; bail before any report reads when absent or stale.
+        let supply =
+            match read_persistent::<SupplySnapshot>(&env, &DataKey::Supply(resolved.clone())) {
+                Some(s) => s,
+                None => return false,
+            };
+        let now = env.ledger().timestamp();
+        if now.saturating_sub(supply.timestamp) > max_age {
+            return false;
+        }
+        // Find the freshest counting report across all tiers >= min_tier.
+        let report = match best_report(&env, &resolved, min_tier) {
+            Some(r) => r,
             None => return false,
         };
-        let now = env.ledger().timestamp();
-        let fresh = |t: u64| now.saturating_sub(t) <= max_age;
-        fresh(coverage.supply_timestamp) && fresh(coverage.report_as_of) && coverage.bps >= min_bps
+        now.saturating_sub(report.as_of) <= max_age
+            && coverage_bps(report.amount, supply.amount) >= min_bps
     }
 
     pub fn transfer_admin(env: Env, new_admin: Address) {

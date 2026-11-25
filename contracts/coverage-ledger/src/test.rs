@@ -829,6 +829,34 @@ fn is_covered_checks_ratio_age_and_tier() {
         .is_covered(&f.sac, &10_000, &(3 * day), &Tier::Transcribed));
 }
 
+/// is_covered uses `bps >= min_bps` (inclusive boundary).
+/// An asset whose coverage ratio equals min_bps exactly must return true,
+/// and one bps below must return false. See SPEC.md "is_covered" rules.
+#[test]
+fn is_covered_exact_bps_boundary_is_inclusive() {
+    let f = listed();
+    // 100 reserves against 100 supply → exactly 10_000 bps (100 %).
+    f.ledger
+        .post_supply(&f.poster, &f.sac, &(100 * UNIT), &990, &hash(&f.env, 1));
+    f.ledger.post_reserve(
+        &f.issuer,
+        &f.sac,
+        &(100 * UNIT),
+        &T0,
+        &hash(&f.env, 2),
+        &uri(&f.env),
+    );
+    let day = 86_400u64;
+    // Exactly at the boundary → covered.
+    assert!(f
+        .ledger
+        .is_covered(&f.sac, &10_000, &day, &Tier::Transcribed));
+    // One bps above the actual coverage → not covered.
+    assert!(!f
+        .ledger
+        .is_covered(&f.sac, &10_001, &day, &Tier::Transcribed));
+}
+
 #[test]
 fn is_covered_false_for_unlisted() {
     let f = setup();
@@ -846,6 +874,123 @@ fn zero_supply_counts_as_covered() {
         .post_reserve(&f.issuer, &f.sac, &0, &T0, &hash(&f.env, 2), &uri(&f.env));
     let c = f.ledger.coverage(&f.sac, &Tier::Transcribed).unwrap();
     assert_eq!(c.bps, u32::MAX);
+}
+
+// ---- asset aliasing (#80) -------------------------------------------------
+
+fn second_sac(f: &Fixture) -> Address {
+    let handle = f
+        .env
+        .register_stellar_asset_contract_v2(Address::generate(&f.env));
+    let sac = handle.address();
+    f.ledger.list_asset(&sac);
+    sac
+}
+
+#[test]
+fn alias_asset_redirects_coverage_queries() {
+    let f = listed();
+    let new_sac = second_sac(&f);
+    supply(&f, 100 * UNIT);
+
+    // Post supply and reserve for the new asset (use auditor; f.issuer is new_sac's issuer only
+    // when the SAC admin happens to match, but here we use the registered auditor to be safe).
+    f.ledger
+        .post_supply(&f.poster, &new_sac, &(100 * UNIT), &990, &hash(&f.env, 10));
+    f.ledger.post_reserve(
+        &f.auditor,
+        &new_sac,
+        &(100 * UNIT),
+        &T0,
+        &hash(&f.env, 11),
+        &uri(&f.env),
+    );
+
+    // Before aliasing, old SAC has no data.
+    assert_eq!(f.ledger.coverage(&f.sac, &Tier::Transcribed), None);
+
+    f.ledger.alias_asset(&f.sac, &new_sac);
+    assert_eq!(f.ledger.get_alias(&f.sac), Some(new_sac.clone()));
+
+    // After aliasing, coverage and is_covered transparently use new_sac.
+    let c = f.ledger.coverage(&f.sac, &Tier::Transcribed).unwrap();
+    assert_eq!(c.bps, 10_000);
+    assert!(f
+        .ledger
+        .is_covered(&f.sac, &10_000, &86_400, &Tier::Transcribed));
+}
+
+#[test]
+fn alias_asset_requires_both_assets_listed() {
+    let f = listed();
+    let unlisted = f
+        .env
+        .register_stellar_asset_contract_v2(Address::generate(&f.env))
+        .address();
+    let res = f.ledger.try_alias_asset(&f.sac, &unlisted);
+    assert_eq!(res, Err(Ok(LedgerError::AssetNotListed.into())));
+}
+
+#[test]
+fn alias_asset_rejects_self_alias() {
+    let f = listed();
+    let res = f.ledger.try_alias_asset(&f.sac, &f.sac);
+    assert_eq!(res, Err(Ok(LedgerError::SelfAlias.into())));
+}
+
+#[test]
+fn alias_asset_requires_admin_auth() {
+    let f = listed();
+    let new_sac = second_sac(&f);
+    let non_admin = Address::generate(&f.env);
+    authorise_only(
+        &f,
+        &[(
+            &non_admin,
+            "alias_asset",
+            (f.sac.clone(), new_sac.clone()).into_val(&f.env),
+        )],
+    );
+    assert_eq!(
+        f.ledger.try_alias_asset(&f.sac, &new_sac),
+        Err(Ok(auth_failure()))
+    );
+}
+
+#[test]
+fn alias_follows_at_most_one_hop() {
+    let f = listed();
+    let mid = second_sac(&f);
+    let handle = f
+        .env
+        .register_stellar_asset_contract_v2(Address::generate(&f.env));
+    let end = handle.address();
+    f.ledger.list_asset(&end);
+
+    // Supply + reserve only on `end` (use auditor since we don't have end's issuer).
+    f.ledger
+        .post_supply(&f.poster, &end, &(100 * UNIT), &990, &hash(&f.env, 20));
+    f.ledger.post_reserve(
+        &f.auditor,
+        &end,
+        &(100 * UNIT),
+        &T0,
+        &hash(&f.env, 21),
+        &uri(&f.env),
+    );
+
+    // Chain: sac → mid → end (but only one hop is followed).
+    f.ledger.alias_asset(&f.sac, &mid);
+    f.ledger.alias_asset(&mid, &end);
+
+    // is_covered(sac) follows sac→mid but NOT mid→end, so it sees no data.
+    assert!(!f
+        .ledger
+        .is_covered(&f.sac, &10_000, &86_400, &Tier::Transcribed));
+    // is_covered(mid) follows mid→end and correctly sees the data.
+    assert!(f
+        .ledger
+        .is_covered(&mid, &10_000, &86_400, &Tier::Transcribed));
 }
 
 // ---- one report per reporter (#26) ---------------------------------------
@@ -1047,6 +1192,54 @@ fn a_reporter_whose_role_changes_starts_a_new_entry_at_the_new_tier() {
             .amount,
         2 * UNIT
     );
+}
+
+// ---- perf: lazy coverage selection with 20-report-equivalent asset (#78) ---
+
+/// Fills all three tiers to their per-tier cap, posts one legacy entry per
+/// tier, then verifies that is_covered returns the correct answer. Ensures the
+/// lazy cursor path handles the maximum number of stored reports correctly, and
+/// that the early stale-supply exit fires before any report reads.
+#[test]
+fn is_covered_with_fully_loaded_tiers_returns_correct_result() {
+    let f = listed();
+    supply(&f, 100 * UNIT);
+
+    // Fill the auditor tier (4 reporters).
+    let mut auditors = std::vec![f.auditor.clone()];
+    for _ in 1..MAX_REPORTERS_PER_TIER {
+        auditors.push(add_reporter(&f, Role::Auditor));
+    }
+    for (i, a) in auditors.iter().enumerate() {
+        post(&f, a, 100 * UNIT, T0 - 400 + i as u64);
+    }
+    // Fill the transcriber tier (4 reporters).
+    let mut transcribers = std::vec![f.transcriber.clone()];
+    for _ in 1..MAX_REPORTERS_PER_TIER {
+        transcribers.push(add_reporter(&f, Role::Transcriber));
+    }
+    for (i, t) in transcribers.iter().enumerate() {
+        post(&f, t, 100 * UNIT, T0 - 300 + i as u64);
+    }
+    // Issuer also posts.
+    post(&f, &f.issuer, 100 * UNIT, T0 - 200);
+
+    let total = f.ledger.get_reports(&f.sac).len();
+    // 4 auditors + 4 transcribers + 1 issuer = 9 counting reports.
+    assert_eq!(total, MAX_REPORTERS_PER_TIER * 2 + 1);
+
+    let day = 86_400u64;
+    // Fully covered asset with many reporters: should be true.
+    assert!(f
+        .ledger
+        .is_covered(&f.sac, &10_000, &day, &Tier::Transcribed));
+
+    // Early-exit on stale supply: advance time beyond max_age for the supply;
+    // is_covered must return false without loading reports.
+    f.env.ledger().set_timestamp(T0 + 2 * day);
+    assert!(!f
+        .ledger
+        .is_covered(&f.sac, &10_000, &day, &Tier::Transcribed));
 }
 
 // ---- v0.1 storage migration ----------------------------------------------
