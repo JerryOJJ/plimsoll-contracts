@@ -5,7 +5,7 @@
 //! also fails if the guide's copy of this file drifts from it.
 #![no_std]
 
-use plimsoll_types::{CoverageLedgerClient, Tier, INSTANCE_EXTEND_TO, INSTANCE_THRESHOLD};
+use plimsoll_types::{is_covered, Tier, INSTANCE_EXTEND_TO, INSTANCE_THRESHOLD};
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, panic_with_error, Address, Env,
 };
@@ -55,12 +55,7 @@ fn policy(env: &Env) -> Policy {
 /// might not qualify (no figures, stale figures, too weak a signer, not
 /// enough reserves) comes back as `false`.
 fn covered(env: &Env, p: &Policy) -> bool {
-    CoverageLedgerClient::new(env, &p.ledger).is_covered(
-        &p.asset,
-        &p.min_bps,
-        &p.max_age,
-        &p.min_tier,
-    )
+    is_covered(env, &p.ledger, &p.asset, p.min_bps, p.max_age, p.min_tier)
 }
 
 #[contractimpl]

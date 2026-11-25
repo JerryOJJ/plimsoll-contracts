@@ -58,6 +58,7 @@ pub enum LedgerError {
     TooManyReporters = 13,
     UpgradeNotProposed = 14,
     UpgradeDelayNotElapsed = 15,
+    InsufficientStake = 16,
 }
 
 #[contractevent]
@@ -382,6 +383,9 @@ impl CoverageLedger {
             panic_with_error!(&env, LedgerError::NotSupplyPoster);
         }
         require_listed(&env, &sac);
+        if !RegistryClient::new(&env, &registry(&env)).has_minimum_stake(&poster) {
+            panic_with_error!(&env, LedgerError::InsufficientStake);
+        }
         if amount < 0 {
             panic_with_error!(&env, LedgerError::InvalidAmount);
         }

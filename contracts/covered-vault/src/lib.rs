@@ -1,6 +1,6 @@
 //! Reference consumer: a single-asset deposit vault that refuses deposits
-//! while the asset is not covered according to the coverage ledger.
-//! Withdrawals are never blocked.
+//! while the asset is not covered according to the coverage ledger. Large
+//! withdrawals require a secondary approver, regardless of coverage status.
 #![no_std]
 
 use plimsoll_types::{
@@ -20,6 +20,8 @@ pub struct VaultConfig {
     pub min_bps: u32,
     pub max_age: u64,
     pub min_tier: Tier,
+    pub approver: Address,
+    pub large_withdrawal_threshold: i128,
 }
 
 #[contracttype]
@@ -36,6 +38,7 @@ pub enum VaultError {
     InvalidAmount = 1,
     NotCovered = 2,
     InsufficientBalance = 3,
+    InvalidThreshold = 4,
 }
 
 #[contractevent]
@@ -106,13 +109,20 @@ impl CoveredVault {
         min_bps: u32,
         max_age: u64,
         min_tier: Tier,
+        approver: Address,
+        large_withdrawal_threshold: i128,
     ) {
+        if large_withdrawal_threshold < 0 {
+            panic_with_error!(&env, VaultError::InvalidThreshold);
+        }
         let cfg = VaultConfig {
             ledger,
             asset,
             min_bps,
             max_age,
             min_tier,
+            approver,
+            large_withdrawal_threshold,
         };
         env.storage().instance().set(&DataKey::Config, &cfg);
         env.storage()
@@ -150,13 +160,16 @@ impl CoveredVault {
         if amount <= 0 {
             panic_with_error!(&env, VaultError::InvalidAmount);
         }
+        let cfg = config(&env);
         let current = balance_of(&env, &to);
         if amount > current {
             panic_with_error!(&env, VaultError::InsufficientBalance);
         }
+        if amount > cfg.large_withdrawal_threshold {
+            cfg.approver.require_auth();
+        }
         let new_balance = current - amount;
         set_balance(&env, &to, new_balance);
-        let cfg = config(&env);
         token::TokenClient::new(&env, &cfg.asset).transfer(
             &env.current_contract_address(),
             &to,
