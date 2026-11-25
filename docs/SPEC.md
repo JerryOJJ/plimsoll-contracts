@@ -379,13 +379,14 @@ rollback should be followed by each reporter posting again.
 ## covered-vault (reference consumer)
 
 A deposit vault for one asset that refuses deposits while the asset is not
-covered. Withdrawals are never blocked.
+covered. Withdrawals are not coverage-gated, but withdrawals above the
+configured threshold also require an approver.
 
 | Function | Auth | Returns | Errors | Event |
 | --- | --- | --- | --- | --- |
-| `__constructor(ledger: Address, asset: Address, min_bps: u32, max_age: u64, min_tier: Tier)` | — | — | — | — |
+| `__constructor(ledger: Address, asset: Address, min_bps: u32, max_age: u64, min_tier: Tier, approver: Address, large_withdrawal_threshold: i128)` | — | — | — | — |
 | `deposit(from: Address, amount: i128)` | from | `i128` new balance | `InvalidAmount`, `NotCovered` | `deposited {from} amount` |
-| `withdraw(to: Address, amount: i128)` | to | `i128` new balance | `InvalidAmount`, `InsufficientBalance` | `withdrawn {to} amount` |
+| `withdraw(to: Address, amount: i128)` | to and approver when `amount > large_withdrawal_threshold` | `i128` new balance | `InvalidAmount`, `InsufficientBalance` | `withdrawn {to} amount` |
 | `balance(of: Address)` | — | `i128` | — | — |
 | `config()` | — | `VaultConfig` | — | — |
 | `can_deposit()` | — | `bool` | — | — |
@@ -396,6 +397,11 @@ answer. It is true exactly when a positive deposit would pass the coverage
 gate, so a front end can show whether the vault is open without simulating a
 deposit and reading a `NotCovered` failure. It says nothing about the
 depositor's balance or authorisation.
+
+`withdraw` always requires `to` authorization. When `amount` is strictly
+greater than `large_withdrawal_threshold`, it also requires authorization from
+the configured `approver`; an amount equal to the threshold needs only `to`.
+Withdrawals remain available regardless of coverage status.
 
 Errors (`VaultError`): `InvalidAmount = 1`, `NotCovered = 2`,
 `InsufficientBalance = 3`. Causes and remedies, and the asset-contract errors a
