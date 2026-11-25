@@ -366,7 +366,7 @@ Errors (`LedgerError`): `NotAStellarAsset = 1`, `AlreadyListed = 2`,
 `FutureTimestamp = 9`, `StaleReport = 10`, `InvalidUri = 11`,
 `ImplausibleAmount = 12`, `TooManyReporters = 13`,
 `UpgradeNotProposed = 14`, `UpgradeDelayNotElapsed = 15`,
-`InsufficientStake = 16`.
+`SelfAlias = 16`, `InsufficientStake = 17`.
 Causes, remedies and the order they are checked in: [ERRORS.md](ERRORS.md#ledgererror).
 
 ### Upgrading a v0.1 deployment

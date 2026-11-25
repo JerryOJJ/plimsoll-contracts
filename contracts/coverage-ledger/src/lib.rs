@@ -60,7 +60,8 @@ pub enum LedgerError {
     TooManyReporters = 13,
     UpgradeNotProposed = 14,
     UpgradeDelayNotElapsed = 15,
-    InsufficientStake = 16,
+    SelfAlias = 16,
+    InsufficientStake = 17,
 }
 
 #[contractevent]
