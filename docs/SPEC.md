@@ -197,7 +197,7 @@ Decides who may speak. Holds no money.
 | `admin()` | — | `Address` | — | — |
 | `set_reporter(reporter: Address, role: Role, name: String)` | admin | `()` | `InvalidName` (len 0 or > 64) | `reporter_set {reporter} role, name` |
 | `set_stake_requirement(stake_asset: Address, min_stake_stroops: i128)` | admin | `()` | `InvalidStakeAmount` | `stake_requirement_set {stake_asset} min_stake_stroops` |
-| `register_reporter(reporter: Address, name: String)` | reporter | `()` | `InvalidName`, `InsufficientStake`, `ReporterAlreadyRegistered` | `reporter_set {reporter} SupplyPoster, name` |
+| `register_reporter(reporter: Address, name: String)` | reporter | `()` | `InvalidName`, `ReporterAlreadyRegistered`, `InsufficientStake` | `reporter_set {reporter} SupplyPoster, name` |
 | `has_minimum_stake(reporter: Address)` | — | `bool` | — | — |
 | `min_stake_stroops()` | — | `i128` | — | — |
 | `revoke(reporter: Address)` | admin | `()` | `ReporterNotFound` | `reporter_revoked {reporter}` |
@@ -283,7 +283,7 @@ data layouts, with real testnet examples, are in [EVENTS.md](EVENTS.md).
 | --- | --- | --- | --- | --- |
 | `__constructor(admin: Address, registry: Address)` | — | — | — | — |
 | `list_asset(sac: Address)` | none (permissionless) | `AssetRecord` | `NotAStellarAsset`, `AlreadyListed` | `asset_listed {sac} code, issuer` |
-| `post_supply(poster: Address, sac: Address, amount: i128, ledger: u32, breakdown_hash: BytesN<32>)` | poster | `()` | `NotSupplyPoster`, `InsufficientStake`, `AssetNotListed`, `InvalidAmount`, `FutureLedger`, `StaleLedger` | `supply_posted {sac} amount, ledger, breakdown_hash, poster` |
+| `post_supply(poster: Address, sac: Address, amount: i128, ledger: u32, breakdown_hash: BytesN<32>)` | poster | `()` | `NotSupplyPoster`, `AssetNotListed`, `InsufficientStake`, `InvalidAmount`, `FutureLedger`, `StaleLedger` | `supply_posted {sac} amount, ledger, breakdown_hash, poster` |
 | `post_reserve(reporter: Address, sac: Address, amount: i128, as_of: u64, doc_hash: BytesN<32>, doc_uri: String)` | reporter | `Tier` | `NotReporter`, `AssetNotListed`, `InvalidAmount`, `FutureTimestamp`, `StaleReport`, `InvalidUri`, `ImplausibleAmount`, `TooManyReporters` | `reserve_posted {sac, tier} amount, as_of, reporter, doc_hash, doc_uri` |
 | `get_asset(sac)` | — | `Option<AssetRecord>` | — | — |
 | `get_supply(sac)` | — | `Option<SupplySnapshot>` | — | — |
@@ -346,7 +346,9 @@ Errors (`LedgerError`): `NotAStellarAsset = 1`, `AlreadyListed = 2`,
 `AssetNotListed = 3`, `NotSupplyPoster = 4`, `NotReporter = 5`,
 `InvalidAmount = 6`, `FutureLedger = 7`, `StaleLedger = 8`,
 `FutureTimestamp = 9`, `StaleReport = 10`, `InvalidUri = 11`,
-`ImplausibleAmount = 12`, `TooManyReporters = 13`.
+`ImplausibleAmount = 12`, `TooManyReporters = 13`,
+`UpgradeNotProposed = 14`, `UpgradeDelayNotElapsed = 15`,
+`InsufficientStake = 16`.
 Causes, remedies and the order they are checked in: [ERRORS.md](ERRORS.md#ledgererror).
 
 ### Upgrading a v0.1 deployment
@@ -408,7 +410,7 @@ configured threshold also require an approver.
 
 | Function | Auth | Returns | Errors | Event |
 | --- | --- | --- | --- | --- |
-| `__constructor(ledger: Address, asset: Address, min_bps: u32, max_age: u64, min_tier: Tier, approver: Address, large_withdrawal_threshold: i128)` | — | — | — | — |
+| `__constructor(ledger: Address, asset: Address, min_bps: u32, max_age: u64, min_tier: Tier, approver: Address, large_withdrawal_threshold: i128)` | — | — | `InvalidThreshold` | — |
 | `deposit(from: Address, amount: i128)` | from | `i128` new balance | `InvalidAmount`, `NotCovered` | `deposited {from} amount` |
 | `withdraw(to: Address, amount: i128)` | to and approver when `amount > large_withdrawal_threshold` | `i128` new balance | `InvalidAmount`, `InsufficientBalance` | `withdrawn {to} amount` |
 | `balance(of: Address)` | — | `i128` | — | — |
@@ -425,11 +427,12 @@ depositor's balance or authorisation.
 `withdraw` always requires `to` authorization. When `amount` is strictly
 greater than `large_withdrawal_threshold`, it also requires authorization from
 the configured `approver`; an amount equal to the threshold needs only `to`.
-Withdrawals remain available regardless of coverage status.
+The threshold must be non-negative. Withdrawals remain available regardless
+of coverage status.
 
 Errors (`VaultError`): `InvalidAmount = 1`, `NotCovered = 2`,
-`InsufficientBalance = 3`. Causes and remedies, and the asset-contract errors a
-vault call can surface: [ERRORS.md](ERRORS.md#vaulterror).
+`InsufficientBalance = 3`, `InvalidThreshold = 4`. Causes and remedies, and the
+asset-contract errors a vault call can surface: [ERRORS.md](ERRORS.md#vaulterror).
 
 ## User flow → function map
 
@@ -441,6 +444,7 @@ vault call can surface: [ERRORS.md](ERRORS.md#vaulterror).
 | Auditor publishes attestation | `coverage-ledger.post_reserve` (auditor) |
 | Volunteer copies a figure from a PDF report | `coverage-ledger.post_reserve` (transcriber) |
 | Maintainer onboards an auditor / transcriber / poster | `reporter-registry.set_reporter` |
+| Supply poster self-registers | `reporter-registry.register_reporter` (minimum XLM balance required) |
 | Maintainer removes a bad actor | `reporter-registry.revoke` (their reports stop counting at once) |
 | Dashboard shows ratio and freshness | `coverage-ledger.coverage`, `get_supply`, `get_reports` |
 | Lending pool refuses an under-backed asset | `coverage-ledger.is_covered` (see `covered-vault`) |

@@ -176,6 +176,18 @@ Testnet: the indexer's supply poster was registered in
 [`6f9bce5a…`](https://stellar.expert/explorer/testnet/tx/6f9bce5af1b52dc53058c3d172591a36cb3b4e1839c726a56aca0a83ae3fd4ee)
 (`role = 2`).
 
+### `stake_requirement_set`
+
+| | Name | Type |
+| --- | --- | --- |
+| topic 0 | `stake_requirement_set` | `Symbol` |
+| topic 1 | `stake_asset` | `Address` (contract) |
+| data | `min_stake_stroops` | `i128` |
+
+Raised by `set_stake_requirement` whenever the admin changes the XLM SAC or
+minimum balance. Consumers should treat the event as the latest configured
+balance requirement; it does not represent XLM held by the registry.
+
 ### `reporter_revoked`
 
 | | Name | Type |
@@ -234,8 +246,8 @@ Testnet:
 | topic 1 | `to` | `Address` |
 | data | `amount` | `i128` |
 
-Withdrawal is not gated on coverage: a depositor can always leave. No testnet
-example yet.
+Withdrawal is not gated on coverage. Amounts above the configured threshold
+also require the vault's secondary approver. No testnet example yet.
 
 ## Reading these events
 
@@ -262,6 +274,7 @@ pasted:
 | `supply_posted` | `AAAADwAAAA1zdXBwbHlfcG9zdGVkAAAA` |
 | `reserve_posted` | `AAAADwAAAA5yZXNlcnZlX3Bvc3RlZAAA` |
 | `reporter_set` | `AAAADwAAAAxyZXBvcnRlcl9zZXQ=` |
+| `stake_requirement_set` | `AAAADwAAABVzdGFrZV9yZXF1aXJlbWVudF9zZXQ=` |
 | `reporter_revoked` | `AAAADwAAABByZXBvcnRlcl9yZXZva2Vk` |
 | `admin_transferred` | `AAAADwAAABFhZG1pbl90cmFuc2ZlcnJlZAAAAA==` |
 | `upgrade_proposed` | `AAAADwAAABB1cGdyYWRlX3Byb3Bvc2Vk` |

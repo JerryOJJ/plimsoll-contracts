@@ -103,7 +103,7 @@ covered, and `is_open` lets a front end ask in advance:
 //! also fails if the guide's copy of this file drifts from it.
 #![no_std]
 
-use plimsoll_types::{CoverageLedgerClient, Tier, INSTANCE_EXTEND_TO, INSTANCE_THRESHOLD};
+use plimsoll_types::{is_covered, Tier, INSTANCE_EXTEND_TO, INSTANCE_THRESHOLD};
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, panic_with_error, Address, Env,
 };
@@ -153,12 +153,7 @@ fn policy(env: &Env) -> Policy {
 /// might not qualify (no figures, stale figures, too weak a signer, not
 /// enough reserves) comes back as `false`.
 fn covered(env: &Env, p: &Policy) -> bool {
-    CoverageLedgerClient::new(env, &p.ledger).is_covered(
-        &p.asset,
-        &p.min_bps,
-        &p.max_age,
-        &p.min_tier,
-    )
+  is_covered(env, &p.ledger, &p.asset, p.min_bps, p.max_age, p.min_tier)
 }
 
 #[contractimpl]
@@ -223,9 +218,9 @@ contract code.
 Two habits from `covered-vault` worth keeping:
 
 - **Gate the way in, not the way out.** Refuse new deposits, loans against or
-  listings of an uncovered asset, but never block users from withdrawing
-  what they already hold. A reserve report going stale is not a reason to
-  trap funds.
+  listings of an uncovered asset, but keep withdrawals available regardless
+  of coverage. An independent large-withdrawal approval policy may still
+  protect users from unauthorized or mistaken transfers.
 - **Ask at the moment you need the answer.** Do not store the result. It
   changes when a report ages past `max_age`, which can happen without any
   transaction touching the ledger.
