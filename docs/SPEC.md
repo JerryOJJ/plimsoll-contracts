@@ -184,6 +184,8 @@ Decides who may speak. Holds no money.
 | Key | Storage | Value |
 | --- | --- | --- |
 | `Admin` | instance | `Address` |
+| `StakeAsset` | instance | `Address` (native XLM SAC) |
+| `MinStakeStroops` | instance | `i128` |
 | `Reporter(Address)` | persistent, TTL extended on write and read | `ReporterInfo` |
 | `PendingUpgrade` | instance | `PendingUpgrade` |
 
@@ -194,6 +196,10 @@ Decides who may speak. Holds no money.
 | `__constructor(admin: Address)` | — | — | — | — |
 | `admin()` | — | `Address` | — | — |
 | `set_reporter(reporter: Address, role: Role, name: String)` | admin | `()` | `InvalidName` (len 0 or > 64) | `reporter_set {reporter} role, name` |
+| `set_stake_requirement(stake_asset: Address, min_stake_stroops: i128)` | admin | `()` | `InvalidStakeAmount` | `stake_requirement_set {stake_asset} min_stake_stroops` |
+| `register_reporter(reporter: Address, name: String)` | reporter | `()` | `InvalidName`, `InsufficientStake`, `ReporterAlreadyRegistered` | `reporter_set {reporter} SupplyPoster, name` |
+| `has_minimum_stake(reporter: Address)` | — | `bool` | — | — |
+| `min_stake_stroops()` | — | `i128` | — | — |
 | `revoke(reporter: Address)` | admin | `()` | `ReporterNotFound` | `reporter_revoked {reporter}` |
 | `role_of(reporter: Address)` | — | `Option<Role>` | — | — |
 | `get_reporter(reporter: Address)` | — | `Option<ReporterInfo>` | — | — |
@@ -203,7 +209,23 @@ Decides who may speak. Holds no money.
 | `cancel_upgrade()` | admin | `()` | `UpgradeNotProposed` | `upgrade_cancelled {wasm_hash}` |
 | `pending_upgrade()` | — | `Option<PendingUpgrade>` | — | — |
 
-Errors (`RegistryError`): `ReporterNotFound = 1`, `InvalidName = 2`.
+Rules:
+
+- `set_stake_requirement` configures the native XLM Stellar Asset Contract and
+  a non-negative minimum balance in stroops. The admin supplies the network's
+  native XLM SAC address.
+- `register_reporter` lets an address register itself only as a `SupplyPoster`.
+  It requires the reporter's auth, rejects an address already in the registry,
+  and checks that its current XLM balance meets `MinStakeStroops`.
+- `has_minimum_stake` compares the reporter's current XLM balance with the
+  configured minimum. `coverage-ledger.post_supply` checks it on every post,
+  so a reporter that later falls below the requirement cannot submit a
+  snapshot. This is a balance requirement, not a transfer or custody of XLM.
+
+Errors (`RegistryError`): `ReporterNotFound = 1`, `InvalidName = 2`,
+`UpgradeNotProposed = 3`, `UpgradeDelayNotElapsed = 4`,
+`InsufficientStake = 5`, `InvalidStakeAmount = 6`,
+`ReporterAlreadyRegistered = 7`.
 Causes and remedies: [ERRORS.md](ERRORS.md#registryerror).
 
 ## coverage-ledger
@@ -261,7 +283,7 @@ data layouts, with real testnet examples, are in [EVENTS.md](EVENTS.md).
 | --- | --- | --- | --- | --- |
 | `__constructor(admin: Address, registry: Address)` | — | — | — | — |
 | `list_asset(sac: Address)` | none (permissionless) | `AssetRecord` | `NotAStellarAsset`, `AlreadyListed` | `asset_listed {sac} code, issuer` |
-| `post_supply(poster: Address, sac: Address, amount: i128, ledger: u32, breakdown_hash: BytesN<32>)` | poster | `()` | `NotSupplyPoster`, `AssetNotListed`, `InvalidAmount`, `FutureLedger`, `StaleLedger` | `supply_posted {sac} amount, ledger, breakdown_hash, poster` |
+| `post_supply(poster: Address, sac: Address, amount: i128, ledger: u32, breakdown_hash: BytesN<32>)` | poster | `()` | `NotSupplyPoster`, `InsufficientStake`, `AssetNotListed`, `InvalidAmount`, `FutureLedger`, `StaleLedger` | `supply_posted {sac} amount, ledger, breakdown_hash, poster` |
 | `post_reserve(reporter: Address, sac: Address, amount: i128, as_of: u64, doc_hash: BytesN<32>, doc_uri: String)` | reporter | `Tier` | `NotReporter`, `AssetNotListed`, `InvalidAmount`, `FutureTimestamp`, `StaleReport`, `InvalidUri`, `ImplausibleAmount`, `TooManyReporters` | `reserve_posted {sac, tier} amount, as_of, reporter, doc_hash, doc_uri` |
 | `get_asset(sac)` | — | `Option<AssetRecord>` | — | — |
 | `get_supply(sac)` | — | `Option<SupplySnapshot>` | — | — |
@@ -293,6 +315,8 @@ Rules:
   forward per reporter: `as_of` strictly greater than that reporter's stored
   report at that tier, and not in the future. Another reporter's report at the
   same tier does not make a figure stale.
+- Before accepting a supply snapshot, `post_supply` verifies that the poster
+  still has at least the reporter registry's configured native XLM balance.
 - Each tier holds reports from at most `MAX_REPORTERS_PER_TIER = 4` reporters
   per asset. When a reporter with no report at a tier posts to a full tier,
   `post_reserve` first drops the entries whose reporter no longer counts
