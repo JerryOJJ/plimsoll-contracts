@@ -67,8 +67,7 @@ pub enum LedgerError {
     UpgradeDelayNotElapsed = 15,
     SelfAlias = 16,
     InsufficientStake = 17,
-
-    Paused = 17,
+    Paused = 18,
 }
 
 #[contractevent]

@@ -8,10 +8,7 @@ use plimsoll_types::{
 };
 use soroban_sdk::{
     contract, contracterror, contractevent, contractimpl, contracttype, panic_with_error,
-    token::TokenClient, Address, BytesN, ContractExecutable, Env, String,
-
-    contract, contracterror, contractevent, contractimpl, contracttype, panic_with_error, Address,
-    Bytes, BytesN, ContractExecutable, Env, String, Symbol,
+    token::TokenClient, Address, Bytes, BytesN, ContractExecutable, Env, String, Symbol,
 };
 
 const MAX_NAME_LEN: u32 = 64;
