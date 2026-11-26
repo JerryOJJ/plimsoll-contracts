@@ -153,7 +153,7 @@ fn policy(env: &Env) -> Policy {
 /// might not qualify (no figures, stale figures, too weak a signer, not
 /// enough reserves) comes back as `false`.
 fn covered(env: &Env, p: &Policy) -> bool {
-  is_covered(env, &p.ledger, &p.asset, p.min_bps, p.max_age, p.min_tier)
+    is_covered(env, &p.ledger, &p.asset, p.min_bps, p.max_age, p.min_tier)
 }
 
 #[contractimpl]
