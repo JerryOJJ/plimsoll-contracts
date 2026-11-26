@@ -109,6 +109,21 @@ Testnet, issuer-signed, 10,200,000 PUSD as of 2026-10-05:
 Auditor-signed, 10,150,000 as of 2026-10-04:
 [`b434db8d…`](https://stellar.expert/explorer/testnet/tx/b434db8d240502176ef22f066a1d16ad3e9a4e9c35a283d0e2837bede3a811ce).
 
+### `reserve_retracted`
+
+| | Name | Type |
+| --- | --- | --- |
+| topic 0 | `reserve_retracted` | `Symbol` |
+| topic 1 | `sac` | `Address` (contract) |
+| topic 2 | `tier` | `Tier` (`u32`) |
+| data | `reporter` | `Address` (account) |
+| data | `as_of` | `u64` |
+
+Raised after the reporter's latest report at the resolved tier is removed.
+The reporter must be the one who posted that report. Events retain the
+retracted report's identity and effective date for off-chain history; the next
+qualifying report, if any, becomes eligible for coverage.
+
 ### `admin_transferred`
 
 | | Name | Type |
@@ -243,6 +258,19 @@ entry without a separate event; treat `reporter_revoked` as clearing it.
 | --- | --- | --- |
 | topic 0 | `reporter_revoked` | `Symbol` |
 | topic 1 | `reporter` | `Address` (account) |
+
+### `stake_changed`
+
+| | Name | Type |
+| --- | --- | --- |
+| topic 0 | `stake_changed` | `Symbol` |
+| topic 1 | `reporter` | `Address` (account) |
+| data | `old_stake` | `i128` |
+| data | `new_stake` | `i128` |
+
+Raised by `top_up_stake` and `reduce_stake` whenever a reporter's tracked stake
+is updated, and by `revoke` (with `new_stake = 0`) if the revoked reporter held
+a positive tracked stake.
 
 No data map. Revocation does not delete the reports a reporter already posted,
 but from that transaction on the coverage ledger stops counting them:
