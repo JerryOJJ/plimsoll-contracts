@@ -7,8 +7,8 @@ use plimsoll_types::{
     PERSISTENT_EXTEND_TO, PERSISTENT_THRESHOLD, UPGRADE_DELAY_LEDGERS,
 };
 use soroban_sdk::{
-    contract, contracterror, contractevent, contractimpl, contracttype, panic_with_error, Address,
-    token::TokenClient, BytesN, ContractExecutable, Env, String,
+    contract, contracterror, contractevent, contractimpl, contracttype, panic_with_error,
+    token::TokenClient, Address, BytesN, ContractExecutable, Env, String,
 };
 
 const MAX_NAME_LEN: u32 = 64;
@@ -118,7 +118,11 @@ fn meets_minimum_stake(env: &Env, reporter: &Address) -> bool {
     if minimum == 0 {
         return true;
     }
-    let asset = match env.storage().instance().get::<_, Address>(&DataKey::StakeAsset) {
+    let asset = match env
+        .storage()
+        .instance()
+        .get::<_, Address>(&DataKey::StakeAsset)
+    {
         Some(asset) => asset,
         None => return false,
     };
@@ -141,7 +145,9 @@ impl ReporterRegistry {
         if min_stake_stroops < 0 {
             panic_with_error!(&env, RegistryError::InvalidStakeAmount);
         }
-        env.storage().instance().set(&DataKey::StakeAsset, &stake_asset);
+        env.storage()
+            .instance()
+            .set(&DataKey::StakeAsset, &stake_asset);
         env.storage()
             .instance()
             .set(&DataKey::MinStakeStroops, &min_stake_stroops);

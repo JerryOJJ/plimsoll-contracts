@@ -10,7 +10,5 @@ pub fn is_covered(
     max_age: u64,
     min_tier: Tier,
 ) -> bool {
-    CoverageLedgerClient::new(env, ledger).is_covered(
-        asset, &min_bps, &max_age, &min_tier,
-    )
+    CoverageLedgerClient::new(env, ledger).is_covered(asset, &min_bps, &max_age, &min_tier)
 }
